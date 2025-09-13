@@ -1,10 +1,11 @@
 <script>
+import { BAD_CATEGORIES, QUESTION_VALUES, NUM_CATEGORIES, DIFFICULTY_MAP, API_BASE, API_CATEGORY_URL, API_TOKEN_URL } from './config.js';
 export default {
   data() {
     return {
-      categories: ["Cat 1", "Cat 2", "Cat 3", "Cat 4"],
+      categories: [],
       categoryIds: [],
-      values: [100, 200, 300, 400, 500],
+      values: QUESTION_VALUES,
       players: [
         { id: 1, score: 0 },
         { id: 2, score: 0 },
@@ -15,14 +16,22 @@ export default {
       currentPlayer: 1,
       loading: true,
       sessionToken: null,
-      badCategories: [13,21,27,30,32]
+      badCategories: BAD_CATEGORIES,
+      gameOver: false,
+      winner: null,
+      feedback: null,
+      feedbackCorrect: null,
+      fetching: false
     }
   },
   components: {
   },
   methods: {
     async selectQuestion(cat, value) {
-      if (this.currentQuestion) return;
+      if (this.currentQuestion || this.fetching) return;
+      this.feedback = null;
+      this.fetching = true;
+
       if (!this.board[cat]) {
         this.board[cat] = [];
       }
@@ -32,17 +41,16 @@ export default {
         if (!existing.usedBy) {
           this.currentQuestion = existing;
         }
+        this.fetching = false;
         return;
       }
 
       let catIndex = this.categories.indexOf(cat);
       let catId = this.categoryIds[catIndex];
+      const difficulty = DIFFICULTY_MAP[value];
 
-      let difficulty = "easy";
-      if (value >= 300 && value < 500) difficulty = "medium";
-      if (value === 500) difficulty = "hard";
-
-      let url = `https://opentdb.com/api.php?amount=1&category=${catId}&difficulty=${difficulty}&type=boolean&encode=base64&token=${this.sessionToken}`;
+      const url = `${API_BASE}?amount=1&category=${catId}&difficulty=${difficulty}&type=boolean&encode=base64&token=${this.sessionToken}`;
+      
       try {
         let res = await fetch(url);
         let data = await res.json();
@@ -50,6 +58,7 @@ export default {
         if (data.response_code === 0 && data.results.length > 0) {
           let qData = data.results[0];
           let questionObj = {
+            category: cat,
             value,
             question: atob(qData.question),
             correct: atob(qData.correct_answer),
@@ -59,18 +68,17 @@ export default {
           this.board[cat].push(questionObj);
           this.currentQuestion = questionObj;
         } else {
-          let questionObj = {
-            value,
-            question: "No question available for this slot.",
-            correct: "True",
-            usedBy: null
-          };
-          this.board[cat].push(questionObj);
-          this.currentQuestion = questionObj;
+          this.feedback = "Too many requests! Please wait a moment and try again."
         }
 
       } catch (err) {
+
         console.error("Error fetching question:", err);
+        this.feedback = "Error loading questions. please try again."
+
+      } finally {
+
+        this.fetching = false;
       }
 
     },
@@ -85,18 +93,35 @@ export default {
       let wasCorrect = (choice ? "True" : "False") === correctAnswer;
       if(wasCorrect) {
         player.score += value;
-        alert("Correct!");
+        this.feedback = "Correct!";
+        this.feedbackCorrect = true;
       } else {
         player.score -= value;
-        alert("Incorrect!");
+        this.feedback = "Incorrect!";
+        this.feedbackCorrect = false;
       }
 
       this.currentQuestion.usedBy = `P${this.currentPlayer}`;
+      this.currentQuestion.wasCorrect = wasCorrect;
 
       if(!wasCorrect) {
         this.currentPlayer = (this.currentPlayer % this.players.length) + 1;
       }
       this.currentQuestion = null;
+
+      let allQuestions = this.values.length * this.categories.length;
+      let usedQuestions = Object.values(this.board).flat().filter(q => q.usedBy).length;
+      if(usedQuestions === allQuestions) {
+        this.gameOver = true;
+        let maxScore = Math.max.apply(null, this.players.map(p => p.score));
+        let winners = this.players.filter(p => p.score === maxScore);
+        if(winners.length > 1) {
+          this.winner = "It's a tie! Players " + winners.map(p => p.id).join(", ") + " with $" + maxScore;  
+        } else {
+          this.winner = `Player ${winners[0].id} wins with $${maxScore}!`;
+        }
+      }
+
     },
 
     getQuestion(cat, value) {
@@ -104,17 +129,17 @@ export default {
     }
   },
   mounted() {
-    fetch("https://opentdb.com/api_token.php?command=request")
+    fetch(API_TOKEN_URL)
       .then(res => res.json())
       .then(tokenData => {
         this.sessionToken = tokenData.token;
-        return fetch("https://opentdb.com/api_category.php");
+        return fetch(API_CATEGORY_URL);
       })
       .then(res => res.json())
       .then(data => {
         let allCategories = data.trivia_categories;
         let chosen = [];
-        for (let i = 0; i < 4; i++) {
+        for (let i = 0; i < NUM_CATEGORIES; i++) {
           let randIndex = Math.floor(Math.random() * allCategories.length);
           let picked = allCategories[randIndex];
           while (this.badCategories.includes(picked.id)) {
@@ -136,64 +161,94 @@ export default {
   }
 }
 </script>
-
 <template>
   <div id="app">
-  <table class="jeopardy">
-    <thead>
-      <tr>
-        <h1>Jeopardy!</h1>
-      </tr>
-    </thead>
-    <tbody>
-      <tr v-for="player in players" :key="player.id">Player {{ player.id }}: ${{ player.score }}</tr>
-    </tbody>
-  </table>
-  <br>
-  <table class="board" v-if="!loading">
-    <thead>
-      <tr>
-        <th v-for="(cat, index) in categories" :key="index">
-          {{ cat }}
-        </th>
-      </tr>
-    </thead>
-    <tbody>
-      <tr v-for="value in values" :key="value">
-        <td v-for="(cat, index) in categories" :key="index" @click="!getQuestion(cat, value)?.usedBy && selectQuestion(cat, value)">
-        <span v-if="!getQuestion(cat, value)">
-          ${{ value }}
-        </span>
-        <span v-else-if="!getQuestion(cat, value).usedBy">
-          ${{ value }}
-        </span>
-        <span v-else>
-          {{ getQuestion(cat, value).usedBy }}
-        </span>
-        </td>
-      </tr>
-    </tbody>
-  </table>
-  <br>
+  <div class="game-container">
+    <div class="scoreboard">
+      <h1>Jeopardy!</h1>
+      <div v-for="player in players" :key="player.id" class="player-score">
+        Player {{ player.id }}: ${{ player.score }}
+      </div>
+    </div>
 
-  <div v-if="currentQuestion">
-    <h3>{{ currentQuestion.category }} - ${{ currentQuestion.value }}</h3>
-    <p>{{ currentQuestion.question }}</p>
-    <button @click="answer(true)">True</button>
-    <button @click="answer(false)">False</button>
+    <table class="board" v-if="!loading">
+      <thead>
+        <tr>
+          <th v-for="(cat, index) in categories" :key="index">{{ cat }}</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr v-for="value in values" :key="value">
+          <td
+            v-for="(cat, index) in categories"
+            :key="index"
+            @click="!currentQuestion && !getQuestion(cat, value)?.usedBy && selectQuestion(cat, value)"
+          >
+            <span v-if="!getQuestion(cat, value)">${{ value }}</span>
+            <span v-else-if="!getQuestion(cat, value).usedBy">${{ value }}</span>
+            <span
+              v-else
+              :class="getQuestion(cat,value).wasCorrect ? 'correct' : 'incorrect'"
+            >
+              {{ getQuestion(cat, value).usedBy }}
+            </span>
+          </td>
+        </tr>
+      </tbody>
+    </table>
+
+    <div class="question-area" v-if="currentQuestion">
+      <h3>
+        Player {{ currentPlayer }}: {{ currentQuestion.category }} -
+        ${{ currentQuestion.value }}
+      </h3>
+      <p>{{ currentQuestion.question }}</p>
+      <div class="buttons">
+        <button @click="answer(true)">True</button>
+        <button @click="answer(false)">False</button>
+      </div>
+    </div>
+
+    <p
+      v-if="feedback"
+      :class="feedback.includes('Correct') ? 'correct feedback' : 'incorrect feedback'"
+    >
+      {{ feedback }}
+    </p>
+
+    <div v-if="gameOver" class="winner">
+      {{ winner }}
+    </div>
+
+    <p v-if="fetching" class="loading">Loading question... please wait!</p>
   </div>
-  <div v-if="loading" class="loading">Loading game...</div>
   </div>
 </template>
-
 <style>
+#app {
+  max-width: 900px;
+  min-width: 600px;
+  margin: 0 auto;
+  text-align: center;
+  color: #fff;
+  font-family: Arial, sans-serif;
+}
+
+.game-container {
+  width: 800px;
+  margin: 0 auto;
+}
+
 .scoreboard {
   margin-bottom: 20px;
-  font-weight: bold;
+}
+
+.player-score {
+  margin: 5px 0;
 }
 
 .board {
-  margin: 0 auto;
+  margin: 20px auto;
   border-collapse: collapse
 }
 
@@ -206,10 +261,46 @@ export default {
   cursor: pointer;
 }
 
+.question-area {
+  margin-top: 30px;
+}
+
+.buttons {
+  margin-top: 10px;
+}
+
+button {
+  margin: 5px;
+  padding: 8px 15px;
+  font-size: 1em;
+  cursor: pointer
+}
+
+.feedback {
+  margin-top: 15px;
+  font-size: 1.2em;
+}
+
 .loading {
   margin: 20px;
   font-weight: bold;
   color: #ffcc00;
 }
 
+.winner {
+  margin-top: 30px;
+  font-size: 1.5em;
+  font-weight: bold;
+  color: #4CAf50
+}
+
+.correct {
+  color: #4CAF50;
+  font-weight: bold;
+}
+
+.incorrect {
+  color: #F44336;
+  font-weight: bold;
+}
 </style>
