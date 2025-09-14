@@ -21,7 +21,10 @@ export default {
       winner: null,
       feedback: null,
       feedbackCorrect: null,
-      fetching: false
+      fetching: false,
+      doubleJeopardy: false,
+      wager: null,
+      pendingWager: null
     }
   },
   components: {
@@ -67,6 +70,22 @@ export default {
 
           this.board[cat].push(questionObj);
           this.currentQuestion = questionObj;
+
+          if (Math.random() < 0.1) {
+            this.doubleJeopardy = true;
+            this.feedback = `Double Jeopardy! Player ${this.currentPlayer}, enter your wager.`
+
+            let player = this.players[this.currentPlayer - 1];
+            if (player.score < value) {
+              this.wager = value;
+              this.feedback = `Double Jeopardy! Player ${this.currentPlayer}, your balance is too low. Wager set to $${value}.`;
+            } else {
+              this.wager = null;
+              this.pendingWager = null;
+            }
+          } else {
+            this.doubleJeopardy = false;
+          }
         } else {
           this.feedback = "Too many requests! Please wait a moment and try again."
         }
@@ -88,7 +107,7 @@ export default {
 
       let correctAnswer = this.currentQuestion.correct;
       let player = this.players[this.currentPlayer - 1];
-      let value = this.currentQuestion.value;
+      let value = this.doubleJeopardy ? this.wager : this.currentQuestion.value;
 
       let wasCorrect = (choice ? "True" : "False") === correctAnswer;
       let nextPlayer = this.currentPlayer;
@@ -109,6 +128,8 @@ export default {
 
       this.currentPlayer = nextPlayer;
       this.currentQuestion = null;
+      this.doubleJeopardy = false;
+      this.wager = null;
 
       let allQuestions = this.values.length * this.categories.length;
       let usedQuestions = Object.values(this.board).flat().filter(q => q.usedBy).length;
@@ -128,7 +149,21 @@ export default {
 
     getQuestion(cat, value) {
       return this.board[cat]?.find(q => q.value === value);
+    },
+
+    confirmWager() {
+      let player = this.players[this.currentPlayer - 1];
+      let maxWager = Math.max(player.score, this.currentQuestion.value);
+
+      if(!this.pendingWager || this.pendingWager < 1 || this.pendingWager > maxWager) {
+        this.feedback = `Invalid wager! You can wager up to $${maxWager}`;
+        return;
+      }
+
+      this.wager = this.pendingWager;
+      this.feedback = `Wager set to $${this.wager}. Now answer the question!`;
     }
+
   },
   mounted() {
     fetch(API_TOKEN_URL)
@@ -204,17 +239,31 @@ export default {
         Player {{ currentPlayer }}: {{ currentQuestion.category }} -
         ${{ currentQuestion.value }}
       </h3>
-      <p>{{ currentQuestion.question }}</p>
-      <div class="buttons">
-        <button @click="answer(true)">True</button>
-        <button @click="answer(false)">False</button>
+
+      <div v-if="doubleJeopardy && wager === null" class="wager-input">
+      <p>Double Jeopardy! Player {{ currentPlayer }}, enter your wager.</p>
+        <label>
+          Wager:
+          <input type="number" v-model.number="pendingWager" min="1" :max="Math.max(players[currentPlayer - 1].score, currentQuestion.value)" />
+        </label>
+        <button @click="confirmWager">Confirm Wager</button>
+      </div>
+      <div v-else>
+        <p>{{ currentQuestion.question }}</p>
+        <div class="buttons">
+          <button @click="answer(true)">True</button>
+          <button @click="answer(false)">False</button>
+        </div>
       </div>
     </div>
 
     <p
-      v-if="feedback"
+      v-if="feedback && !doubleJeopardy"
       :class="feedback.includes('Correct') ? 'correct feedback' : 'incorrect feedback'"
     >
+      {{ feedback }}
+    </p>
+    <p v-if="doubleJeopardy && (wager === null || feedback.includes('Wager set'))" class="double-jeopardy">
       {{ feedback }}
     </p>
 
@@ -304,5 +353,23 @@ button {
 .incorrect {
   color: #F44336;
   font-weight: bold;
+}
+
+.wager-input {
+  margin: 10px 0;
+  font-size: 1.1em;
+}
+
+.wager-input input {
+  width: 80px;
+  margin-left: 8px;
+  padding: 4px;
+}
+
+.double-jeopardy {
+  color: #ffcc00;
+  font-weight: bold;
+  margin-top: 15px;
+  font-size: 1.2em;
 }
 </style>
