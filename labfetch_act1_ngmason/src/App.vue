@@ -118,7 +118,7 @@ export default {
         let maxScore = Math.max.apply(null, this.players.map(p => p.score));
         let winners = this.players.filter(p => p.score === maxScore);
         if(winners.length > 1) {
-          this.winner = "It's a tie! Players " + winners.map(p => p.id).join(", ") + " with $" + maxScore;  
+          this.winner = "It's a tie! Players " + winners.map(p => p.id).join(", ") + " win with $" + maxScore;  
         } else {
           this.winner = `Player ${winners[0].id} wins with $${maxScore}!`;
         }
