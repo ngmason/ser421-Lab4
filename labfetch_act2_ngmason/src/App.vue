@@ -24,7 +24,10 @@ export default {
       fetching: false,
       doubleJeopardy: false,
       wager: null,
-      pendingWager: null
+      pendingWager: null,
+      gameStarted: false,
+      numPlayers: 3,
+      numCategories: NUM_CATEGORIES
     }
   },
   components: {
@@ -162,6 +165,57 @@ export default {
 
       this.wager = this.pendingWager;
       this.feedback = `Wager set to $${this.wager}. Now answer the question!`;
+    },
+
+    startGame() {
+      if (this.numPlayers < 2) {
+        this.numPlayers = 2;
+      }
+      if (this.numPlayers > 6) {
+        this.numPlayers = 6;
+      }
+      if (this.numCategories < 2) {
+        this.numCategories = 2;
+      }
+      if (this.numCategories > 10) {
+        this.numCategories = 10;
+      }
+      this.players = [];
+      for (let i = 1; i <= this.numPlayers; i++) {
+        this.players.push({ id: i, score: 0});
+      }
+
+      this.loading = true;
+
+      fetch(API_TOKEN_URL)
+        .then(res => res.json())
+        .then(tokenData => {
+          this.sessionToken = tokenData.token;
+          return fetch(API_CATEGORY_URL);
+        })
+        .then(res => res.json())
+        .then(data => {
+          let allCategories = data.trivia_categories;
+          let chosen = [];
+          for (let i = 0; i < this.numCategories; i++) {
+            let randIndex = Math.floor(Math.random() * allCategories.length);
+            let picked = allCategories[randIndex];
+            while (this.badCategories.includes(picked.id)) {
+              randIndex = Math.floor(Math.random() * allCategories.length);
+              picked = allCategories[randIndex];
+            }
+
+            allCategories.splice(randIndex, 1);
+            chosen.push(picked);
+          }
+
+          this.categories = chosen.map(c => c.name);
+          this.categoryIds = chosen.map(c => c.id);
+          this.loading = false;
+          this.gameStarted = true;
+        }).catch((function(err) {
+          console.error("Error fetching categories:", err);
+        }));
     }
 
   },
@@ -170,108 +224,104 @@ export default {
       .then(res => res.json())
       .then(tokenData => {
         this.sessionToken = tokenData.token;
-        return fetch(API_CATEGORY_URL);
-      })
-      .then(res => res.json())
-      .then(data => {
-        let allCategories = data.trivia_categories;
-        let chosen = [];
-        for (let i = 0; i < NUM_CATEGORIES; i++) {
-          let randIndex = Math.floor(Math.random() * allCategories.length);
-          let picked = allCategories[randIndex];
-          while (this.badCategories.includes(picked.id)) {
-            randIndex = Math.floor(Math.random() * allCategories.length);
-            picked = allCategories[randIndex];
-          }
-          
-          allCategories.splice(randIndex, 1);
-          chosen.push(picked);
-        }
-
-        this.categories = chosen.map(c => c.name);
-        this.categoryIds = chosen.map(c => c.id);
-        this.loading = false;
-
-      }).catch((function(err) {
-        console.error("Error fetching categories:", err);
-      }));
+      }).catch(function(err) {
+        console.error("Error fetching token:", err);
+      });
   }
 }
 </script>
 <template>
   <div id="app">
   <div class="game-container">
-    <div class="scoreboard">
-      <h1>Jeopardy!</h1>
-      <div v-for="player in players" :key="player.id" class="player-score">
-        Player {{ player.id }}: ${{ player.score }}
-      </div>
+    <div v-if="!gameStarted" class="setup">
+      <h1>Jeopardy Setup</h1>
+      <br>
+      <label>Number of Players (2-6):
+      <input type="number" v-model.number="numPlayers" min="2" max="6"/>
+      </label>
+      <br>
+      <br>
+      <label>Number of Categories:
+      <input type="number" v-model.number="numCategories" min="2" max="10"/>
+      </label>
+      <br>
+      <br>
+      <button @click="startGame">Start Game</button>
     </div>
 
-    <table class="board" v-if="!loading">
-      <thead>
-        <tr>
-          <th v-for="(cat, index) in categories" :key="index">{{ cat }}</th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr v-for="value in values" :key="value">
-          <td
-            v-for="(cat, index) in categories"
-            :key="index"
-            @click="!currentQuestion && !getQuestion(cat, value)?.usedBy && selectQuestion(cat, value)"
-          >
-            <span v-if="!getQuestion(cat, value)">${{ value }}</span>
-            <span v-else-if="!getQuestion(cat, value).usedBy">${{ value }}</span>
-            <span
-              v-else
-              :class="getQuestion(cat,value).wasCorrect ? 'correct' : 'incorrect'"
-            >
-              {{ getQuestion(cat, value).usedBy }}
-            </span>
-          </td>
-        </tr>
-      </tbody>
-    </table>
-
-    <div class="question-area" v-if="currentQuestion">
-      <h3>
-        Player {{ currentPlayer }}: {{ currentQuestion.category }} -
-        ${{ currentQuestion.value }}
-      </h3>
-
-      <div v-if="doubleJeopardy && wager === null" class="wager-input">
-      <p>Double Jeopardy! Player {{ currentPlayer }}, enter your wager.</p>
-        <label>
-          Wager:
-          <input type="number" v-model.number="pendingWager" min="1" :max="Math.max(players[currentPlayer - 1].score, currentQuestion.value)" />
-        </label>
-        <button @click="confirmWager">Confirm Wager</button>
-      </div>
-      <div v-else>
-        <p>{{ currentQuestion.question }}</p>
-        <div class="buttons">
-          <button @click="answer(true)">True</button>
-          <button @click="answer(false)">False</button>
+    <div v-else>
+      <div class="scoreboard">
+        <h1>Jeopardy!</h1>
+        <div v-for="player in players" :key="player.id" class="player-score">
+          Player {{ player.id }}: ${{ player.score }}
         </div>
       </div>
+
+      <table class="board" v-if="!loading">
+        <thead>
+          <tr>
+            <th v-for="(cat, index) in categories" :key="index">{{ cat }}</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="value in values" :key="value">
+            <td
+              v-for="(cat, index) in categories"
+              :key="index"
+              @click="!currentQuestion && !getQuestion(cat, value)?.usedBy && selectQuestion(cat, value)"
+            >
+              <span v-if="!getQuestion(cat, value)">${{ value }}</span>
+              <span v-else-if="!getQuestion(cat, value).usedBy">${{ value }}</span>
+              <span
+                v-else
+                :class="getQuestion(cat,value).wasCorrect ? 'correct' : 'incorrect'"
+              >
+                {{ getQuestion(cat, value).usedBy }}
+              </span>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+
+      <div class="question-area" v-if="currentQuestion">
+        <h3>
+          Player {{ currentPlayer }}: {{ currentQuestion.category }} -
+          ${{ currentQuestion.value }}
+        </h3>
+
+        <div v-if="doubleJeopardy && wager === null" class="wager-input">
+        <p>Double Jeopardy! Player {{ currentPlayer }}, enter your wager.</p>
+          <label>
+            Wager:
+            <input type="number" v-model.number="pendingWager" min="1" :max="Math.max(players[currentPlayer - 1].score, currentQuestion.value)" />
+          </label>
+          <button @click="confirmWager">Confirm Wager</button>
+        </div>
+        <div v-else>
+          <p>{{ currentQuestion.question }}</p>
+          <div class="buttons">
+            <button @click="answer(true)">True</button>
+            <button @click="answer(false)">False</button>
+          </div>
+        </div>
+      </div>
+
+      <p
+        v-if="feedback && !doubleJeopardy"
+        :class="feedback.includes('Correct') ? 'correct feedback' : 'incorrect feedback'"
+      >
+        {{ feedback }}
+      </p>
+      <p v-if="doubleJeopardy && (wager === null || feedback.includes('Wager set'))" class="double-jeopardy">
+        {{ feedback }}
+      </p>
+
+      <div v-if="gameOver" class="winner">
+        {{ winner }}
+      </div>
+
+      <p v-if="fetching" class="loading">Loading question... please wait!</p>
     </div>
-
-    <p
-      v-if="feedback && !doubleJeopardy"
-      :class="feedback.includes('Correct') ? 'correct feedback' : 'incorrect feedback'"
-    >
-      {{ feedback }}
-    </p>
-    <p v-if="doubleJeopardy && (wager === null || feedback.includes('Wager set'))" class="double-jeopardy">
-      {{ feedback }}
-    </p>
-
-    <div v-if="gameOver" class="winner">
-      {{ winner }}
-    </div>
-
-    <p v-if="fetching" class="loading">Loading question... please wait!</p>
   </div>
   </div>
 </template>
